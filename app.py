@@ -63,7 +63,7 @@ def refresh(window: list[str], model: str, threshold: float) -> tuple:
     edge = predict.edge(df, model, threshold)
     lo, hi = predict.edge_interval(edge["edge"])
     score = predict.scorecard(df, threshold)
-    sample = ", includes training days" if df["day"].min() < TEST_START else ""
+    sample = ", incl. train days" if df["day"].min() < TEST_START else ""
     selected = score.filter(model=model).row(0, named=True)
     out = predict.outcomes(df, model, threshold)
     saved = out.filter(cell="saved")["eur"].sum()
@@ -73,7 +73,7 @@ def refresh(window: list[str], model: str, threshold: float) -> tuple:
             ("Probability", f"{p:.0%}", f"threshold {threshold:.0%}"),
             ("Realised spread", f"{last['y_spread']:.1f}", f"EUR/MWh, cost {cost:.0f}"),
             ("P&L on range", f"{selected['profit_eur_per_mw']:,.0f}", f"EUR/MW, {selected['capture'] or 0:.0%} of perfect"),
-            ("Saved by resting", f"{saved:,.0f}", "EUR/MW of losses avoided"),
+            ("Saved by resting", f"{saved:,.0f}", "EUR/MW"),
             ("Edge vs naive", f"{edge['edge'].sum():+,.0f}", f"EUR/MW, 90% CI {lo:+,.0f} to {hi:+,.0f}{sample}"),
         ],
     )
@@ -95,7 +95,7 @@ def refresh(window: list[str], model: str, threshold: float) -> tuple:
         dash.calibration_chart(predict.calibration(df)),
         dash.edge_table(edge, model),
         dash.contribution_chart(terms, bias, f"Why {dash.LABELS[model]} says {p:.0%} for {last['day']:%d %b %Y}"),
-        dash.distribution_chart(df, TRAIN, "y_spread", "Target: daily 4h spread (EUR/MWh), range vs training period", (cost, "cycle cost")),
+        dash.distribution_chart(df, TRAIN, "y_spread", "Daily spread vs training period (EUR/MWh)", (cost, "cycle cost")),
         dash.drift_chart(psi_table(TRAIN, df, FEATURES)),
     )
 
@@ -106,7 +106,7 @@ def feature_chart(window: list[str], feature: str) -> object:
 
 
 with gr.Blocks(title="Battery Spread Desk") as demo:
-    gr.Markdown("# Battery Spread Desk\nSpanish day-ahead market. Should a 4h battery cycle tomorrow? Yes when the spread between the 4 dearest and 4 cheapest hours beats the cycle cost.")
+    gr.Markdown("# Battery Spread Desk\nShould a 4h battery cycle tomorrow in the Spanish day-ahead market?")
     with gr.Row(equal_height=True):
         presets = [gr.Button(name, size="sm", min_width=60, scale=0) for name in PRESETS]
         start = gr.DateTime(preset_window(DEFAULT_PRESET)[0], include_time=False, type="string", label="From", scale=1)
@@ -135,7 +135,7 @@ with gr.Blocks(title="Battery Spread Desk") as demo:
                 pnl = gr.Plot(show_label=False)
                 calibration = gr.Plot(show_label=False)
             edges = gr.HTML()
-            gr.Markdown("### Why this call\nEach model is a logistic regression, so the call splits exactly into one term per input: weight times the input's standardised value. The day explained is the last day of the window.")
+            gr.Markdown("### Why this call")
             contribution = gr.Plot(show_label=False)
             gr.Plot(dash.weights_chart(WEIGHTS), show_label=False)
             gr.Markdown("### Target and feature distributions")

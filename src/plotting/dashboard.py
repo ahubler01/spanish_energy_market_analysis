@@ -132,7 +132,7 @@ def zscore_grid(
         f"<tr><th>{label}</th>{''.join(_cell(a, b) for a, b in zip(z[f'z|{c}'], z[c]))}</tr>"
         for c, label in labels.items()
     )
-    note = f"z-score vs the previous {window} days, value in brackets. Red = above normal, blue = below, darker = more extreme."
+    note = f"z-score vs the previous {window} days (value). Red above normal, blue below."
     return f'<div class="zwrap"><table class="zgrid"><tr><th></th>{head}</tr>{rows}</table></div><div class="znote">{note}</div>'
 
 
@@ -183,7 +183,7 @@ def spread_chart(
         annotation_font_color=BAD,
     )
     _mark_test_start(fig, df, test_start)
-    return _layout(fig, f"Daily 4h spread (EUR/MWh), errors of {LABELS[model]}")
+    return _layout(fig, f"Daily spread and errors of {LABELS[model]} (EUR/MWh)")
 
 
 def probability_chart(
@@ -215,7 +215,7 @@ def probability_chart(
     )
     _mark_test_start(fig, df, test_start)
     fig.update_layout(bargap=0)
-    return _layout(fig, "Probability of a profitable cycle vs outcome", 340).update_yaxes(
+    return _layout(fig, "Probability vs outcome", 340).update_yaxes(
         range=[0, 1.05], tickformat=".0%"
     )
 
@@ -244,7 +244,7 @@ def pnl_chart(df: pl.DataFrame, threshold: float) -> go.Figure:
             line={"color": COLORS[m], "width": 2},
         )
     fig.add_hline(y=0, line={"color": MUTED, "width": 1, "dash": "dash"}, annotation_text="naive")
-    return _layout(fig, "Cumulative P&L vs naive (EUR per MW)").update_yaxes(tickformat=",.0f")
+    return _layout(fig, "Cumulative P&L vs naive (EUR/MW)").update_yaxes(tickformat=",.0f")
 
 
 def distribution_chart(
@@ -314,7 +314,7 @@ def threshold_chart(sweep: pl.DataFrame, threshold: float) -> go.Figure:
             line={"color": COLORS[m], "width": 2, "dash": "dash" if m == "naive" else "solid"},
         )
     fig.add_vline(x=threshold, line={"color": INK, "width": 1, "dash": "dot"}, annotation_text="current")
-    fig = _layout(fig, "P&L by decision threshold (EUR per MW)")
+    fig = _layout(fig, "P&L by threshold (EUR/MW)")
     fig.update_xaxes(tickformat=".0%")
     return fig.update_yaxes(tickformat=",.0f")
 
@@ -340,7 +340,7 @@ def calibration_chart(cal: pl.DataFrame) -> go.Figure:
             customdata=rows["n"],
             hovertemplate="predicted %{x:.0%}<br>observed %{y:.0%}<br>%{customdata} days",
         )
-    fig = _layout(fig, "Calibration: predicted (x) vs realised cycle rate (y)")
+    fig = _layout(fig, "Calibration")
     fig.update_layout(hovermode="closest")
     fig.update_xaxes(range=[0, 1], tickformat=".0%")
     return fig.update_yaxes(range=[0, 1.02], tickformat=".0%")
@@ -389,7 +389,7 @@ def contribution_chart(
     )
     fig = _layout(fig, title, 480)
     fig.update_layout(hovermode="closest", showlegend=False, margin={"l": 190})
-    fig.update_xaxes(title="log-odds of a profitable cycle (green pushes to cycle)")
+    fig.update_xaxes(title="log-odds (green pushes to cycle)")
     return fig.update_yaxes(autorange="reversed")
 
 
@@ -407,7 +407,7 @@ def weights_chart(weights: pl.DataFrame, top: int = 15) -> go.Figure:
             for m in MODELS
         ],
     )
-    fig = _layout(fig, "What each model learned: weight per standard deviation", 480)
+    fig = _layout(fig, "Model weights (per std)", 480)
     fig.update_layout(barmode="group", hovermode="y unified", margin={"l": 190})
     return fig.update_yaxes(autorange="reversed")
 
@@ -423,8 +423,8 @@ def edge_table(edge: pl.DataFrame, model: str) -> str:
         for r in days.iter_rows(named=True)
     )
     if not rows:
-        return '<div class="znote">The model and naive made the same call on every day in this range.</div>'
-    note = f"{days.height} days where {LABELS[model]} and naive disagree. Edge = what the model's call earned minus naive's."
+        return '<div class="znote">Same call as naive on every day.</div>'
+    note = f"{days.height} days where {LABELS[model]} and naive disagree."
     return (
         f'<div class="znote">{note}</div><div class="edgewrap"><table class="score"><tr>{head}</tr>{rows}</table></div>'
     )
@@ -503,7 +503,7 @@ def day_price_chart(
         row=2,
         col=1,
     )
-    fig = _layout(fig, f"Hourly price on {day:%a %d %b %Y} (EUR/MWh) vs its {window}-day normal", 480)
+    fig = _layout(fig, f"Hourly price, {day:%d %b %Y} (EUR/MWh)", 480)
     fig.update_layout(hovermode="closest")
     fig.update_xaxes(dtick=2, ticksuffix="h")
     return fig.update_yaxes(title_text="z", row=2, col=1)
@@ -523,7 +523,7 @@ def hourly_z_heatmap(prices: pl.DataFrame, window: int) -> go.Figure:
             hovertemplate="%{x|%a %d %b %Y} %{y}h<br>z %{z:+.1f}<extra></extra>",
         ),
     )
-    fig = _layout(fig, f"Hourly price z-score vs the same hour over the previous {window} days", 420)
+    fig = _layout(fig, f"Hourly price z-score ({window}d)", 420)
     fig.update_layout(hovermode="closest")
     return fig.update_yaxes(dtick=3, ticksuffix="h", autorange="reversed")
 
@@ -571,7 +571,7 @@ def earnings_chart(
         secondary_y=True,
     )
     _mark_test_start(fig, out, test_start)
-    fig = _layout(fig, "What following the model earned, EUR per MW (bars daily, lines cumulative)", 420)
+    fig = _layout(fig, "Earnings (EUR/MW)", 420)
     fig.update_layout(barmode="relative", bargap=0.1)
     fig.update_yaxes(tickformat=",.0f", secondary_y=False)
     return fig.update_yaxes(tickformat=",.0f", showgrid=False, secondary_y=True)
@@ -598,7 +598,7 @@ def confusion_chart(out: pl.DataFrame, threshold: float) -> go.Figure:
             ygap=4,
         ),
     )
-    title = f"Confusion matrix at {threshold:.0%}: errors cost {eur('lost') + eur('missed'):,.0f} EUR/MW"
+    title = f"Confusion at {threshold:.0%}, errors cost {eur('lost') + eur('missed'):,.0f} EUR/MW"
     fig = _layout(fig, title, 380)
     fig.update_xaxes(title="realised day", side="bottom", showgrid=False)
     return fig.update_yaxes(title="model call", autorange="reversed", showgrid=False)
@@ -630,7 +630,7 @@ def hour_roles_chart(prices: pl.DataFrame) -> go.Figure:
             ),
         ],
     )
-    fig = _layout(fig, f"When the battery would run, share of {days} days", 340)
+    fig = _layout(fig, "Charge and discharge hours", 340)
     fig.update_layout(barmode="group", bargap=0.15)
     fig.update_xaxes(dtick=2, ticksuffix="h")
     return fig.update_yaxes(tickformat=".0%")
@@ -650,7 +650,7 @@ def drift_chart(table: pl.DataFrame, top: int = 12) -> go.Figure:
     )
     for x, text in [(0.1, "moderate"), (0.25, "large")]:
         fig.add_vline(x=x, line={"color": MUTED, "width": 1, "dash": "dot"}, annotation_text=text)
-    fig = _layout(fig, "Input drift vs training period (population stability index)", 420)
+    fig = _layout(fig, "Input drift vs training (PSI)", 420)
     fig.update_layout(hovermode="closest", showlegend=False, margin={"l": 190})
     return fig.update_yaxes(autorange="reversed")
 
