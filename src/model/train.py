@@ -21,6 +21,7 @@ from src.plotting.charts import line_chart, metrics_table
 cfg = CONFIG.model
 log = get_logger(__name__)
 Val = tuple[np.ndarray, np.ndarray] | None
+THRESHOLDS = np.round(np.arange(0.05, 1, 0.05), 2)
 
 
 def tensor(x: np.ndarray) -> torch.Tensor:
@@ -246,14 +247,54 @@ def feature_matrix(df: pl.DataFrame) -> np.ndarray:
     return x
 
 
-def evaluate(p: np.ndarray, spread: np.ndarray) -> dict[str, float]:
+def profit(cycle: np.ndarray, spread: np.ndarray) -> float:
+    # profit per MW of battery capacity, mean over all days
+    return BATTERY_HOURS * float(np.sum((spread - cfg.cycle_cost) * cycle))
+
+
+def ece(
+    p: np.ndarray,
+    y: np.ndarray,
+    bins: int = 10,
+) -> float:
+    # gap between mean probability and observed rate, weighted by bin size
+    idx = np.minimum((p * bins).astype(int), bins - 1)
+    return float(sum((idx == b).mean() * abs(p[idx == b].mean() - y[idx == b].mean()) for b in np.unique(idx)))
+
+
+def logit(p: np.ndarray) -> np.ndarray:
+    # log odds, clipped to avoid NaN and inf
+    p = np.clip(p, 1e-6, 1 - 1e-6)
+    return np.log(p / (1 - p)).reshape(-1, 1)
+
+
+# platt scaling: a 1 feature logistic regression on the model's log odds
+def calibrate(
+    calibrator: LogisticRegression,
+    p: np.ndarray,
+) -> np.ndarray:
+    return calibrator.predict_proba(logit(p))[:, 1]
+
+
+def best_threshold(p: np.ndarray, spread: np.ndarray) -> float:
+    # most profitable cut on the grid
+    return float(max(THRESHOLDS, key=lambda t: profit(p >= t, spread)))
+
+
+def evaluate(
+    p: np.ndarray,
+    spread: np.ndarray,
+    threshold: float,
+) -> dict[str, float]:
     y = spread > cfg.cycle_cost
-    cycle = p >= 0.5
+    cycle = p >= threshold
     return {
+        "threshold": threshold,
         "accuracy": accuracy_score(y, cycle),
         "roc_auc": roc_auc_score(y, p),
         "log_loss": log_loss(y, np.clip(p, 1e-3, 1 - 1e-3), labels=[False, True]),
-        "profit_eur_per_mw": BATTERY_HOURS * float(np.sum((spread - cfg.cycle_cost) * cycle)),
+        "ece": ece(p, y),
+        "profit_eur_per_mw": profit(cycle, spread),
     }
 
 
@@ -281,7 +322,10 @@ def train() -> pl.DataFrame:
     # naive: cycle if yesterday's spread beat the cost
     naive = (df["spread_1d"].to_numpy() > cfg.cycle_cost).astype(float)
 
-    rows = [{"model": "naive", "params": "", **evaluate(naive[n:], spread[n:])}]
+    rows = [
+        {"model": "naive", "params": "", **evaluate(naive[n:], spread[n:], 0.5)},
+        {"model": "always_cycle", "params": "", **evaluate(np.ones(len(df) - n), spread[n:], 0.5)},
+    ]
     cv_rows = []
 
     curves = {}
@@ -309,10 +353,22 @@ def train() -> pl.DataFrame:
 
         log.info(f"{name}: cv log loss {cv_loss:.4f} {study.best_params}")
 
-        # CV metrics on every validated train day
+        # calibration and threshold both fitted on the out of fold days, test stays untouched
         seen = ~np.isnan(oof)
+        calibrator = LogisticRegression().fit(logit(oof[seen]), y[:n][seen])
+        oof_cal = calibrate(calibrator, oof[seen])
+        threshold = best_threshold(oof_cal, spread[:n][seen])
+
+        # CV metrics on every validated train day
         params = ", ".join(f"{k}={v:.3g}" for k, v in study.best_params.items())
-        cv_rows.append({"model": name, "params": params, **evaluate(oof[seen], spread[:n][seen])})
+        cv_rows.append(
+            {
+                "model": name,
+                "params": params,
+                "ece_raw": ece(oof[seen], y[:n][seen]),
+                **evaluate(oof_cal, spread[:n][seen], threshold),
+            }
+        )
 
         if histories:
             history = np.mean(histories, axis=0)
@@ -323,9 +379,17 @@ def train() -> pl.DataFrame:
         model = best.fit(x_train, y[:n], weight[:n]) if isinstance(best, ManualLogReg) else best.fit(x_train, y[:n])
 
         joblib.dump(model, MODELS_DIR / f"{name}.joblib")
-        p = model.predict_proba(prep.transform(x[n:]))[:, 1]
+        p_raw = model.predict_proba(prep.transform(x[n:]))[:, 1]
+        p = calibrate(calibrator, p_raw)
 
-        rows.append({"model": name, "params": str(study.best_params), **evaluate(p, spread[n:])})
+        rows.append(
+            {
+                "model": name,
+                "params": str(study.best_params),
+                "ece_raw": ece(p_raw, y[n:]),
+                **evaluate(p, spread[n:], threshold),
+            }
+        )
 
     fig = line_chart(
         pl.DataFrame({"epoch": range(cfg.epochs), **curves}),
@@ -336,17 +400,33 @@ def train() -> pl.DataFrame:
     fig.write_image(MODELS_DIR / "cv_loss.png")
 
     # naive on the same validated days
-    cv_rows.append({"model": "naive", "params": "yesterday's spread", **evaluate(naive[:n][seen], spread[:n][seen])})
+    cv_rows.append(
+        {
+            "model": "naive",
+            "params": "yesterday's spread",
+            "ece_raw": ece(naive[:n][seen], y[:n][seen]),
+            **evaluate(naive[:n][seen], spread[:n][seen], 0.5),
+        }
+    )
+    cv_rows.append(
+        {
+            "model": "always_cycle",
+            "params": "",
+            "ece_raw": ece(np.ones(seen.sum()), y[:n][seen]),
+            **evaluate(np.ones(seen.sum()), spread[:n][seen], 0.5),
+        }
+    )
     footer = "<br>".join(
         [
             f"Cycle when the {BATTERY_HOURS}h charge-then-discharge spread after losses beats {cfg.cycle_cost:.0f} EUR/MWh.",
             f"Train {df['day'][0]} to {df['day'][n - 1]}, {cfg.n_folds}-fold expanding window CV on {seen.sum()} validated days."
             f" Test from {df['day'][n]} held out (ranking.csv).",
+            "Probabilities Platt calibrated and threshold set for profit on these same out of fold days.",
         ]
     )
     table = metrics_table(
         pl.DataFrame(cv_rows).sort("profit_eur_per_mw", descending=True),
-        lower_better=("log_loss",),
+        lower_better=("log_loss", "ece", "ece_raw"),
         footer=footer,
         title="Cross-validation metrics",
     )

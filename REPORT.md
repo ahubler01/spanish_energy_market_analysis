@@ -70,12 +70,13 @@ It is also simple and easy to interpret, which fits a first model. I also added 
 In total, my train file has 3 models (scikit-learn, a manual PyTorch loop and a standard `nn.Linear` with the Adam optimizer).
 Each one was slightly tuned with Optuna on the same time-based CV, and tested on the same 418 days (August 2025 to September 2026).
 
-| Model            | Accuracy | ROC AUC | Log-loss | Profit (€/MW) |
-| ---------------- | -------- | ------- | -------- | ------------- |
-| Manual PyTorch   | 0.95     | 0.90    | 0.15     | 103,745       |
-| scikit-learn     | 0.94     | 0.91    | 0.14     | 103,658       |
-| Standard PyTorch | 0.94     | 0.91    | 0.18     | 103,560       |
-| Naive            | 0.93     | 0.64    | 0.50     | 102,785       |
+| Model            | Threshold | Accuracy | ROC AUC | Log-loss | ECE (raw → calibrated) | Profit (€/MW) |
+| ---------------- | --------- | -------- | ------- | -------- | ---------------------- | ------------- |
+| scikit-learn     | 0.50      | 0.95     | 0.91    | 0.15     | 0.025 → 0.040          | 103,742       |
+| Manual PyTorch   | 0.55      | 0.95     | 0.90    | 0.17     | 0.026 → 0.048          | 103,742       |
+| Standard PyTorch | 0.55      | 0.95     | 0.91    | 0.16     | 0.069 → 0.045          | 103,742       |
+| Always cycle     | –         | 0.95     | 0.50    | 0.36     | 0.053                  | 103,742       |
+| Naive            | –         | 0.93     | 0.64    | 0.50     | 0.072                  | 102,785       |
 
 We can observe that the metrics are very similar, so the three models agree, with all of them outperforming the naive baseline.
 I experimented with the manual model's loss function, and it ends up first on profit and accuracy, although only by a small margin.
@@ -87,7 +88,8 @@ The regularisation in the standard PyTorch model did not seem to help (its log-l
 
 - The Spanish market changed between my train/validation and test sets: 73% of days were profitable before August 2025, against 95% after. This led me to review my target to better take operational costs into account.
 - The gap between the naive PnL and the best model is only €960/MW over the test period, so the real challenge is not the decision itself but the timing (which hours to charge and discharge), which could be a natural next step.
-- I did not tune the threshold. The validation folds would allow it (244 unprofitable days out of 1,390), but in the test set only 22 days out of 418 are unprofitable and most probabilities are well above 50% (median 0.97 for scikit-learn), so moving the threshold would barely change the profit. It can still be adjusted in the Gradio app. The same can be said about calibration.
+- I tuned the threshold and calibrated the probabilities on the validation folds (244 unprofitable days out of 1,390), leaving the test set untouched. The raw probabilities were underconfident (about 70% predicted against 82% observed, ECE 0.11–0.16), so I first applied Platt scaling and then picked the most profitable threshold, which came back to about 0.5.
+- Calibration also did not carry over well. It improved the standard PyTorch ECE but worsened the other two, because it learned a correction for a period with 82% profitable days and the test period has 95%. Since calibration changes neither the ranking nor the test profit, and worsens log-loss for two of the three models, I did not carry it into the dashboard.
 - This pipeline relies on three assumptions around the target (85% efficiency, €20 wear cost and a 4-hour battery), and it could be worth running a Monte Carlo simulation on these parameters.
 - Finally, battery operators can also be paid for helping the grid stay balanced (balancing services), which would increase the PnL.
 
